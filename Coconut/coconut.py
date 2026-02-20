@@ -78,7 +78,7 @@ class Coconut(nn.Module):
 
         for pass_idx in range(max_n_latents):
 
-            if kv_cache == None:
+            if kv_cache is None:
                 # first forward pass
                 outputs = self.base_causallm(
                     inputs_embeds=inputs_embeds[
@@ -217,6 +217,7 @@ class Coconut(nn.Module):
         past_key_values = None
 
         labels = input_ids.clone()  # placeholder. not used.
+
         outputs = self.forward(
             input_ids,
             torch.ones_like(input_ids, device=input_ids.device),
@@ -400,7 +401,7 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
 
         for pass_idx in range(max_n_latents):
 
-            if kv_cache == None:
+            if kv_cache is None:
                 # first forward pass
                 outputs = self.base_causallm(
                     inputs_embeds=inputs_embeds[
@@ -835,9 +836,11 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
 
     def train(self):
         self.base_causallm.train()
+        self.expainable_llm.train()
 
     def eval(self):
         self.base_causallm.eval()
+        self.expainable_llm.eval()
 
     def generate(
         self,
@@ -848,7 +851,7 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
         synced_gpus=False,
         **kwargs
     ):
-        
+
         self.gen_forward_cnt = 0
 
         assert input_ids.shape[0] == 1, "only support batch_size == 1 now"

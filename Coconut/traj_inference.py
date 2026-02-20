@@ -13,19 +13,28 @@ from data import _load_trajectory_dataset
 def greedy_decode_from_embeds(
     lm,
     tokenizer,
-    prefix_embeds,          # (1, Lp, H)
+    prefix_embeds,          # (1, Lp, H)  — optional prompt suffix appended AFTER latent
     latent_embeds,          # (1, Ll, H)
     max_new_tokens=128,
 ):
+    """Decode text from latent thought embeddings.
+
+    The latent embeddings come first (matching the training layout in coconut.py:786
+    where `[continuous_embeds, other_embeds]` = `[latent, text]`).
+    prefix_embeds are appended after latent as an optional steering suffix.
+    position_ids start at 1 to match training (coconut.py:791 uses arange(1, len+1)).
+    """
     device = next(lm.parameters()).device
     eos = tokenizer.eos_token_id
 
-    cur = torch.cat([prefix_embeds, latent_embeds], dim=1).to(device)
+    # latent first, then optional prefix — mirrors training order [latent, text]
+    cur = torch.cat([latent_embeds, prefix_embeds], dim=1).to(device)
     generated = []
 
     for _ in range(max_new_tokens):
         attn = torch.ones(cur.shape[:2], device=device, dtype=torch.long)
-        pos = torch.arange(cur.shape[1], device=device, dtype=torch.long).unsqueeze(0)
+        # position_ids start at 1 to match training (coconut.py uses arange(1, len+1))
+        pos = torch.arange(1, cur.shape[1] + 1, device=device, dtype=torch.long).unsqueeze(0)
 
         out = lm(inputs_embeds=cur, attention_mask=attn, position_ids=pos)
         next_id = int(torch.argmax(out.logits[0, -1], dim=-1).item())
@@ -100,6 +109,7 @@ def main():
 
     # Resize embeddings because we added new tokens
     base_model.resize_token_embeddings(len(tokenizer))
+    explainable_model.resize_token_embeddings(len(tokenizer))
 
     # Init new tokens from a known token (same idea as training)
     emb = base_model.get_input_embeddings()
