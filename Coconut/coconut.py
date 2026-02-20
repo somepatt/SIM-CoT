@@ -10,6 +10,21 @@ import copy
 Outputs = namedtuple("Outputs", ["loss", "inputs_embeds", "logits"])
 MAX_N_LATENT = 8
 
+def _crop_past_key_values(kv_cache, prefix_len):
+    if kv_cache is None:
+        return None
+
+    # New HF cache format (e.g., DynamicCache used by Qwen3)
+    if hasattr(kv_cache, "get_seq_length"):
+        if hasattr(kv_cache, "crop"):
+            kv_cache.crop(prefix_len)
+        return kv_cache
+
+    # Legacy format: iterable of (k, v) tensors per layer
+    return tuple(
+        (k[..., :prefix_len, :], v[..., :prefix_len, :])
+        for k, v in kv_cache
+    )
 
 class Coconut(nn.Module):
 
@@ -49,6 +64,7 @@ class Coconut(nn.Module):
             for i in range(input_ids.shape[0])
         ]  # bs, num_latent_tokens_in_the_instance (difference across the batch)
 
+
         max_n_latents = max([len(l) for l in latent_lists])
 
         next_compute_range = (0, input_ids.shape[1])
@@ -80,13 +96,7 @@ class Coconut(nn.Module):
 
             else:
                 # extract kv cache to reuse
-                past_key_values = [
-                    (
-                        k[:, :, : next_compute_range[0], :],
-                        v[:, :, : next_compute_range[0], :],
-                    )
-                    for k, v in kv_cache
-                ]
+                past_key_values = _crop_past_key_values(kv_cache, next_compute_range[0])
 
                 outputs = self.base_causallm(
                     inputs_embeds=inputs_embeds[
@@ -164,17 +174,7 @@ class Coconut(nn.Module):
             ],
             attention_mask=attention_mask[:, : next_compute_range[1]],
             position_ids=position_ids[:, next_compute_range[0] : next_compute_range[1]],
-            past_key_values=(
-                [
-                    (
-                        k[:, :, : next_compute_range[0], :],
-                        v[:, :, : next_compute_range[0], :],
-                    )
-                    for k, v in kv_cache
-                ]
-                if kv_cache
-                else None
-            ),
+            past_key_values=_crop_past_key_values(kv_cache, next_compute_range[0]),
             output_hidden_states=True,
         )
 
@@ -327,6 +327,42 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
             for i in range(input_ids.shape[0])
         ]  # bs, num_latent_tokens_in_the_instance (difference across the batch)
 
+        # # ---- DEBUG latent thoughts (rank-safe) ----
+        # import os
+        # rank = int(os.environ.get("RANK", "0"))
+
+        # if rank == 0:
+        #     print("-" * 60)
+        #     print("DEBUG: latent thoughts in batch")
+
+        #     # latent_indices: positions of latent tokens in input_ids
+        #     print("latent_indices shape:", tuple(latent_indices.shape))
+        #     print("num latent tokens total in batch:", latent_indices.shape[0])
+
+        #     print("batch size:", input_ids.shape[0])
+        #     print("seq len:", input_ids.shape[1])
+
+        #     print("len(latent_lists) (should equal batch size):", len(latent_lists))
+        #     if len(latent_lists) > 0:
+        #         for b, lst in enumerate(latent_lists):
+        #             # lst = list of positions (token indices) where latent tokens occur
+        #             print(f"instance {b}: num latent tokens = {len(lst)}; positions head = {lst[:10]}")
+        #     else:
+        #         print("latent_lists is empty")
+
+        #     # quick boolean: do we have any latent tokens at all?
+        #     has_any_latent = any(len(lst) > 0 for lst in latent_lists) if latent_lists else False
+        #     print("has_any_latent:", has_any_latent)
+        #     print("-" * 60)
+
+        #     import os
+        #     rank = int(os.environ.get("RANK", "0"))
+        #     if rank == 0:
+        #         print("DEBUG latent_token_id (model):", self.latent_token_id)
+        #         print("DEBUG sample unique ids head:", torch.unique(input_ids[0][:200]).tolist()[:50])
+        #         print("DEBUG contains latent_id?:", bool((input_ids == self.latent_token_id).any().item()))
+        # # ---- END DEBUG ----
+
         max_n_latents = max([len(l) for l in latent_lists])
 
         next_compute_range = (0, input_ids.shape[1])
@@ -358,13 +394,7 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
 
             else:
                 # extract kv cache to reuse
-                past_key_values = [
-                    (
-                        k[:, :, : next_compute_range[0], :],
-                        v[:, :, : next_compute_range[0], :],
-                    )
-                    for k, v in kv_cache
-                ]
+                past_key_values = _crop_past_key_values(kv_cache, next_compute_range[0])
 
                 outputs = self.base_causallm(
                     inputs_embeds=inputs_embeds[
@@ -442,17 +472,7 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
             ],
             attention_mask=attention_mask[:, : next_compute_range[1]],
             position_ids=position_ids[:, next_compute_range[0] : next_compute_range[1]],
-            past_key_values=(
-                [
-                    (
-                        k[:, :, : next_compute_range[0], :],
-                        v[:, :, : next_compute_range[0], :],
-                    )
-                    for k, v in kv_cache
-                ]
-                if kv_cache
-                else None
-            ),
+            past_key_values=_crop_past_key_values(kv_cache, next_compute_range[0]),
             output_hidden_states=True,
         )
 
@@ -565,6 +585,9 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
                             groups.append(group)
                         else:
                             i += 1
+
+                    if len(groups) == 0:
+                        groups = [trim_trailing_zeros(seq)]
 
                     if len(groups) < self.config.max_latent_stage:
                         input_ids_j = input_ids[j].tolist()
