@@ -116,8 +116,6 @@ bash scripts/train_llama3b_gsm8k-aug-decoder-2.sh
 bash CODI/scripts/test_llama3b-copy.sh
 ```
 
-
-
 ## ✒️ Citation
 
 If you find our work helpful for your research, please consider giving a star ⭐ and citation 📝
