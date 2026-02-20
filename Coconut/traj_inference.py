@@ -107,9 +107,13 @@ def main():
     base_model = AutoModelForCausalLM.from_pretrained(args.model_id).to(device)
     explainable_model = AutoModelForCausalLM.from_pretrained(args.model_id).to(device)
 
-    # Resize embeddings because we added new tokens
+    # Resize embeddings because we added new tokens.
+    # Only base_model is resized — matches how the checkpoint was saved during training.
+    # explainable_model keeps its original vocab size (e.g. 151936) because:
+    #   - Training code never resized it, so checkpoint expainable_llm is at original size.
+    #   - All new special token IDs (latent, start-latent, end-latent) are assigned into
+    #     the range of the original vocab (< original vocab_size), so they're in range.
     base_model.resize_token_embeddings(len(tokenizer))
-    explainable_model.resize_token_embeddings(len(tokenizer))
 
     # Init new tokens from a known token (same idea as training)
     emb = base_model.get_input_embeddings()
