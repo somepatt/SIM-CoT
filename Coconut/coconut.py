@@ -620,24 +620,30 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
                         try:
                             start_idx = len(input_ids_j) - 1 - input_ids_j[::-1].index(self.end_latent_id)
                         except ValueError:
-                            continue
+                            # end_latent_id not found — use an empty pseudo_thought so the
+                            # batch item is still included (avoids bz != batch_size mismatch).
+                            pseudo_thought = [self.eos_token_id]
+                            while len(groups) < c_thought_num:
+                                groups.append(pseudo_thought)
+                            # fall through to input_united_groups construction below
+                        else:
+                            try:
+                                end_idx = input_ids_j.index(self.eos_token_id, start_idx + 1)
+                            except ValueError:
+                                end_idx = len(input_ids_j)
 
-                        try:
-                            end_idx = input_ids_j.index(self.eos_token_id, start_idx + 1)
-                        except ValueError:
-                            end_idx = len(input_ids_j)
+                            pseudo_thought = input_ids_j[start_idx + 1:end_idx]
 
-                        pseudo_thought = input_ids_j[start_idx + 1:end_idx]
+                            if not pseudo_thought:
+                                # Empty region between end_latent and EOS — use EOS as placeholder.
+                                pseudo_thought = [self.eos_token_id]
 
-                        if not pseudo_thought:
-                            continue
+                            if hasattr(self.config, 'format_pseudo_thought') and self.config.format_pseudo_thought:
+                                tmp_num = self.tokenizer.decode(pseudo_thought).replace('### ', '')
+                                pseudo_thought = self.tokenizer.encode(f'<<{tmp_num}={tmp_num}>>', add_special_tokens=False)
 
-                        if hasattr(self.config, 'format_pseudo_thought') and self.config.format_pseudo_thought:
-                            tmp_num = self.tokenizer.decode(pseudo_thought).replace('### ', '')
-                            pseudo_thought = self.tokenizer.encode(f'<<{tmp_num}={tmp_num}>>', add_special_tokens=False)
-
-                        while len(groups) < c_thought_num:
-                            groups.append(pseudo_thought)
+                            while len(groups) < c_thought_num:
+                                groups.append(pseudo_thought)
 
                     input_united_groups = []
                     combined_group = []

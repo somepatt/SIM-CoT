@@ -7,6 +7,7 @@ import gc
 import json
 import os
 import sys
+from copy import copy
 
 import torch
 import torch.distributed as dist
@@ -430,9 +431,17 @@ def main():
 
                 batch = _move_batch_to_device(batch, local_rank)
 
-                # SIM-CoT branch expects explainable_ids_list
+                # SIM-CoT branch expects explainable_ids_list as a flat List[int]
+                # with << >> delimiters marking step boundaries per sample.
+                # data.py returns steps_tokenized as List[List[int]] per sample
+                # (nested: one inner list per reasoning step, no delimiters).
+                # We flatten here and wrap each step with << >> tokens.
                 if "steps_tokenized" in batch and "explainable_ids_list" not in batch:
-                    batch["explainable_ids_list"] = batch.pop("steps_tokenized")
+                    raw_steps = batch.pop("steps_tokenized")
+                    batch["explainable_ids_list"] = [
+                        [tok for step in sample_steps for tok in ([l_id] + list(step) + [r_id])]
+                        for sample_steps in raw_steps
+                    ]
 
                 outputs = parallel_model(
                     **{k: v for k, v in batch.items() if k != "idx"}
@@ -487,7 +496,11 @@ def main():
                 batch = _move_batch_to_device(batch, local_rank)
 
                 if "steps_tokenized" in batch and "explainable_ids_list" not in batch:
-                    batch["explainable_ids_list"] = batch.pop("steps_tokenized")
+                    raw_steps = batch.pop("steps_tokenized")
+                    batch["explainable_ids_list"] = [
+                        [tok for step in sample_steps for tok in ([l_id] + list(step) + [r_id])]
+                        for sample_steps in raw_steps
+                    ]
 
                 outputs = parallel_model(
                     **{k: v for k, v in batch.items() if k != "idx"}
