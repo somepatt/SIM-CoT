@@ -143,6 +143,7 @@ def _load_trajectory_dataset(dataset_path: str) -> Dataset:
 
         # Инкрементально накапливаем контекст
         accumulated_context: List[Dict] = []
+        accumulated_thoughts: List[str] = []
         step_counter = 0
 
         for idx, message in enumerate(messages):
@@ -154,20 +155,25 @@ def _load_trajectory_dataset(dataset_path: str) -> Dataset:
                 if split and split["code"]:
                     # Создаем prompt из всего накопленного контекста
                     prompt = _format_chat_messages(accumulated_context)
-                    thought = split["thought"]
+                    thought = split["thought"].strip()
                     code = split["code"]
 
                     if prompt and code:
                         sample_id = f"{instance_id}-step{step_counter}" if instance_id else None
+                        current_steps = list(accumulated_thoughts)
+                        if thought:
+                            current_steps.append(thought)
                         samples.append(
                             {
                                 "instance_id": sample_id,
                                 "prompt": prompt,
                                 "patch": code,
-                                "steps": [thought] if thought else [],
+                                "steps": current_steps,
                             }
                         )
                         step_counter += 1
+                        if thought:
+                            accumulated_thoughts.append(thought)
 
             # Добавляем сообщение в контекст для следующих шагов
             accumulated_context.append(message)
@@ -445,7 +451,8 @@ def get_question_latent_dataset(
     c_thought = configs.get("c_thought", 1)
 
     def process_dataset(sample):
-        k = min(scheduled_stage, max_latent_stage) * c_thought
+        available_steps = len(sample.get("steps_tokenized", []))
+        k = min(scheduled_stage, max_latent_stage, available_steps) * c_thought
 
         tokens = (
             sample["question_tokenized"]
@@ -511,7 +518,8 @@ def get_cot_latent_dataset(
         if no_cot_flag:
             n_latent_tokens = 0
         else:
-            stage_clamped = min(scheduled_stage, max_latent_stage)
+            available_steps = len(sample.get("steps_tokenized", []))
+            stage_clamped = min(scheduled_stage, max_latent_stage, available_steps)
             n_latent_tokens = stage_clamped * c_thought
 
         tokens = (

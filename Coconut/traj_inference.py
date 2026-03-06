@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 from types import SimpleNamespace
 
 import torch
@@ -13,27 +14,23 @@ from data import _load_trajectory_dataset
 def greedy_decode_from_embeds(
     lm,
     tokenizer,
-    prefix_embeds,          # (1, Lp, H)  — optional prompt suffix appended AFTER latent
-    latent_embeds,          # (1, Ll, H)
+    latent_embeds,
+    prefix_embeds=None,
     max_new_tokens=128,
 ):
-    """Decode text from latent thought embeddings.
-
-    The latent embeddings come first (matching the training layout in coconut.py:786
-    where `[continuous_embeds, other_embeds]` = `[latent, text]`).
-    prefix_embeds are appended after latent as an optional steering suffix.
-    position_ids start at 1 to match training (coconut.py:791 uses arange(1, len+1)).
-    """
+    """Decode text from latent thought embeddings."""
     device = next(lm.parameters()).device
     eos = tokenizer.eos_token_id
 
-    # latent first, then optional prefix — mirrors training order [latent, text]
-    cur = torch.cat([latent_embeds, prefix_embeds], dim=1).to(device)
+    if prefix_embeds is None:
+        cur = latent_embeds.to(device)
+    else:
+        cur = torch.cat([latent_embeds, prefix_embeds], dim=1).to(device)
+
     generated = []
 
     for _ in range(max_new_tokens):
         attn = torch.ones(cur.shape[:2], device=device, dtype=torch.long)
-        # position_ids start at 1 to match training (coconut.py uses arange(1, len+1))
         pos = torch.arange(1, cur.shape[1] + 1, device=device, dtype=torch.long).unsqueeze(0)
 
         out = lm(inputs_embeds=cur, attention_mask=attn, position_ids=pos)
@@ -46,6 +43,14 @@ def greedy_decode_from_embeds(
         cur = torch.cat([cur, next_embed], dim=1)
 
     return tokenizer.decode(generated, skip_special_tokens=True)
+
+
+def postprocess_decoded_thought(text: str) -> str:
+    text = text.strip()
+    match = re.search(r"<<(.*?)>>", text, flags=re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text
 
 
 def pick_sample(ds, sample_id=None, sample_index=None):
@@ -108,7 +113,7 @@ def main():
     explainable_model = AutoModelForCausalLM.from_pretrained(args.model_id).to(device)
 
     # Resize embeddings because we added new tokens.
-    # Only base_model is resized — matches how the checkpoint was saved during training.
+    # Only base_model is resized - matches how the checkpoint was saved during training.
     # explainable_model keeps its original vocab size (e.g. 151936) because:
     #   - Training code never resized it, so checkpoint expainable_llm is at original size.
     #   - All new special token IDs (latent, start-latent, end-latent) are assigned into
@@ -177,7 +182,8 @@ def main():
 
     # --- build input_ids with latent tokens ---
     prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
-    k = min(args.scheduled_stage, args.max_latent_stage) * args.c_thought
+    available_steps = len(sample.get("steps", []))
+    k = min(args.scheduled_stage, args.max_latent_stage, available_steps) * args.c_thought
 
     input_ids = torch.tensor(
         [prompt_ids + [start_id] + [latent_id] * k + [end_id]],
@@ -229,19 +235,15 @@ def main():
             e = (ti + 1) * args.c_thought
             chunk = lat_emb[:, s:e, :]
 
-            prefix = f"Step {ti + 1}: "
-            prefix_ids = tokenizer.encode(prefix, add_special_tokens=False)
-            prefix_emb = explainable_model.get_input_embeddings()(
-                torch.tensor([prefix_ids], device=device)
-            )
 
             decoded = greedy_decode_from_embeds(
                 explainable_model,
                 tokenizer,
-                prefix_embeds=prefix_emb,
+                prefix_embeds=None,
                 latent_embeds=chunk,
                 max_new_tokens=args.decode_tokens,
             )
+            decoded = postprocess_decoded_thought(decoded)
 
             print("\n" + "-" * 80)
             print(f"LATENT THOUGHT #{ti + 1} (decoded):")

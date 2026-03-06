@@ -58,6 +58,31 @@ def _move_batch_to_device(batch, device):
     return moved
 
 
+def _build_explainable_ids_list(raw_steps, input_ids, latent_id, c_thought, l_id, r_id):
+    """
+    Build explainable supervision from the most recent thought steps only.
+    The number of selected thought steps matches latent thought slots per sample.
+    """
+    explainable = []
+    c_thought = max(int(c_thought), 1)
+
+    for sample_steps, sample_input_ids in zip(raw_steps, input_ids):
+        latent_count = int((sample_input_ids == latent_id).sum().item())
+        n_thoughts = latent_count // c_thought
+
+        if n_thoughts > 0:
+            selected_steps = sample_steps[-n_thoughts:]
+        else:
+            selected_steps = []
+
+        flat = []
+        for step in selected_steps:
+            flat.extend([l_id] + list(step) + [r_id])
+        explainable.append(flat)
+
+    return explainable
+
+
 def main():
     parser = argparse.ArgumentParser(description="coconut")
     parser.add_argument("config_file")
@@ -438,10 +463,14 @@ def main():
                 # We flatten here and wrap each step with << >> tokens.
                 if "steps_tokenized" in batch and "explainable_ids_list" not in batch:
                     raw_steps = batch.pop("steps_tokenized")
-                    batch["explainable_ids_list"] = [
-                        [tok for step in sample_steps for tok in ([l_id] + list(step) + [r_id])]
-                        for sample_steps in raw_steps
-                    ]
+                    batch["explainable_ids_list"] = _build_explainable_ids_list(
+                        raw_steps=raw_steps,
+                        input_ids=batch["input_ids"],
+                        latent_id=latent_id,
+                        c_thought=configs.c_thought,
+                        l_id=l_id,
+                        r_id=r_id,
+                    )
 
                 outputs = parallel_model(
                     **{k: v for k, v in batch.items() if k != "idx"}
@@ -497,10 +526,14 @@ def main():
 
                 if "steps_tokenized" in batch and "explainable_ids_list" not in batch:
                     raw_steps = batch.pop("steps_tokenized")
-                    batch["explainable_ids_list"] = [
-                        [tok for step in sample_steps for tok in ([l_id] + list(step) + [r_id])]
-                        for sample_steps in raw_steps
-                    ]
+                    batch["explainable_ids_list"] = _build_explainable_ids_list(
+                        raw_steps=raw_steps,
+                        input_ids=batch["input_ids"],
+                        latent_id=latent_id,
+                        c_thought=configs.c_thought,
+                        l_id=l_id,
+                        r_id=r_id,
+                    )
 
                 outputs = parallel_model(
                     **{k: v for k, v in batch.items() if k != "idx"}
