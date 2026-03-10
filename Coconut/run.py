@@ -5,6 +5,7 @@ import argparse
 import functools
 import gc
 import json
+import math
 import os
 import sys
 from copy import copy
@@ -497,16 +498,34 @@ def main():
                     base_loss_scalar = None
                     explain_loss_scalar = None
                     total_loss_scalar = None
+                    base_valid_targets = None
+                    base_logits_finite = None
+                    c_thought_num_dbg = None
+                    explain_valid_targets = None
+                    explain_logits_finite = None
+                    explain_eff_min = None
+                    explain_eff_max = None
                     if isinstance(loss_breakdown, dict):
                         base_loss_scalar = loss_breakdown.get("base_loss")
                         explain_loss_scalar = loss_breakdown.get("explain_loss")
                         total_loss_scalar = loss_breakdown.get("total_loss")
+                        base_valid_targets = loss_breakdown.get("base_valid_targets")
+                        base_logits_finite = loss_breakdown.get("base_logits_finite")
+                        c_thought_num_dbg = loss_breakdown.get("c_thought_num")
+                        explain_valid_targets = loss_breakdown.get("explain_valid_targets")
+                        explain_logits_finite = loss_breakdown.get("explain_logits_finite")
+                        explain_eff_min = loss_breakdown.get("explain_effective_count_min")
+                        explain_eff_max = loss_breakdown.get("explain_effective_count_max")
                         if base_loss_scalar is not None:
                             log_dict["train/base_loss"] = base_loss_scalar
                         if explain_loss_scalar is not None:
                             log_dict["train/explain_loss"] = explain_loss_scalar
                         if total_loss_scalar is not None:
                             log_dict["train/total_loss"] = total_loss_scalar
+                        if base_valid_targets is not None:
+                            log_dict["train/base_valid_targets"] = base_valid_targets
+                        if explain_valid_targets is not None:
+                            log_dict["train/explain_valid_targets"] = explain_valid_targets
 
                     if wandb_run:
                         wandb_run.log(log_dict)
@@ -516,7 +535,27 @@ def main():
                             f"[loss_breakdown] epoch={epoch+1} step={step} "
                             f"total={total_loss_scalar if total_loss_scalar is not None else 'NA'} "
                             f"base={base_loss_scalar if base_loss_scalar is not None else 'NA'} "
-                            f"explain={explain_loss_scalar if explain_loss_scalar is not None else 'NA'}"
+                            f"explain={explain_loss_scalar if explain_loss_scalar is not None else 'NA'} "
+                            f"| base_targets={base_valid_targets if base_valid_targets is not None else 'NA'} "
+                            f"base_logits_finite={base_logits_finite if base_logits_finite is not None else 'NA'} "
+                            f"explain_targets={explain_valid_targets if explain_valid_targets is not None else 'NA'} "
+                            f"explain_logits_finite={explain_logits_finite if explain_logits_finite is not None else 'NA'} "
+                            f"c_thought_num={c_thought_num_dbg if c_thought_num_dbg is not None else 'NA'} "
+                            f"explain_eff_min={explain_eff_min if explain_eff_min is not None else 'NA'} "
+                            f"explain_eff_max={explain_eff_max if explain_eff_max is not None else 'NA'}"
+                        )
+
+                    nan_in_total = (total_loss_scalar is not None) and (not math.isfinite(float(total_loss_scalar)))
+                    nan_in_base = (base_loss_scalar is not None) and (not math.isfinite(float(base_loss_scalar)))
+                    nan_in_explain = (explain_loss_scalar is not None) and (not math.isfinite(float(explain_loss_scalar)))
+                    if nan_in_total or nan_in_base or nan_in_explain:
+                        print(
+                            f"[nan_debug] epoch={epoch+1} step={step} "
+                            f"total={total_loss_scalar} base={base_loss_scalar} explain={explain_loss_scalar} "
+                            f"base_targets={base_valid_targets} base_logits_finite={base_logits_finite} "
+                            f"explain_targets={explain_valid_targets} explain_logits_finite={explain_logits_finite} "
+                            f"c_thought_num={c_thought_num_dbg} "
+                            f"explain_eff_min={explain_eff_min} explain_eff_max={explain_eff_max}"
                         )
 
                     extra_loss_info = ""

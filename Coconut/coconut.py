@@ -351,6 +351,13 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
         loss = 0.0
         base_loss_value = None
         explain_loss_value = None
+        base_valid_targets = None
+        base_logits_finite = None
+        explain_valid_targets = 0
+        explain_logits_finite = True
+        explain_effective_count_min = None
+        explain_effective_count_max = None
+        c_thought_num_debug = None
         latent_indices = (
             input_ids == self.latent_token_id
         ).nonzero()  # (num_latent_tokens_in_the_batch, 2)
@@ -516,6 +523,8 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
         logits = torch.cat(logits, dim=-2)
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
+        base_valid_targets = int((shift_labels != -100).sum().item())
+        base_logits_finite = bool(torch.isfinite(shift_logits).all().item())
         loss_fct = CrossEntropyLoss()
         if self.config.training_method == 'only_base_causallm' or self.config.training_method == 'full':
             loss = loss_fct(
@@ -570,6 +579,7 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
             
             if 'explainable_ids_list' in kwargs:
                 c_thought_num = len(latent_lists[0]) // self.c_thought
+                c_thought_num_debug = c_thought_num
                 
                 input_united_tokens = []
                 def safe_token_id(x):
@@ -767,6 +777,13 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
 
                     shift_explain_logits = explainable_logits[..., :-1, :].contiguous()
                     shift_explain_labels = input_explain_labels_batch_tensor[..., 1:].to(torch.long).contiguous()
+                    explain_valid_targets += int((shift_explain_labels != -100).sum().item())
+                    explain_logits_finite = explain_logits_finite and bool(torch.isfinite(shift_explain_logits).all().item())
+                    eff_cnt = float(effective_loss_num)
+                    if explain_effective_count_min is None or eff_cnt < explain_effective_count_min:
+                        explain_effective_count_min = eff_cnt
+                    if explain_effective_count_max is None or eff_cnt > explain_effective_count_max:
+                        explain_effective_count_max = eff_cnt
                     loss_explain_fct = CrossEntropyLoss(reduction='sum')
                     loss_explain = loss_explain_fct(
                         shift_explain_logits.view(-1, shift_explain_logits.size(-1)), shift_explain_labels.view(-1)
@@ -845,6 +862,13 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
 
                         shift_explain_logits = explainable_logits[..., :-1, :].contiguous()
                         shift_explain_labels = input_explain_labels[..., 1:].contiguous()
+                        explain_valid_targets += int((shift_explain_labels != -100).sum().item())
+                        explain_logits_finite = explain_logits_finite and bool(torch.isfinite(shift_explain_logits).all().item())
+                        eff_cnt = float(effective_token_count.item()) if torch.is_tensor(effective_token_count) else float(effective_token_count)
+                        if explain_effective_count_min is None or eff_cnt < explain_effective_count_min:
+                            explain_effective_count_min = eff_cnt
+                        if explain_effective_count_max is None or eff_cnt > explain_effective_count_max:
+                            explain_effective_count_max = eff_cnt
                         loss_explain_fct = CrossEntropyLoss(reduction='sum')
                         loss_explain = loss_explain_fct(
                             shift_explain_logits.view(-1, shift_explain_logits.size(-1)).to(self.expainable_llm.device), shift_explain_labels.view(-1).to(self.expainable_llm.device)
@@ -864,6 +888,13 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
             "base_loss": float(base_loss_value.float().item()) if base_loss_value is not None else None,
             "explain_loss": float(explain_loss_value.float().item()) if explain_loss_value is not None else None,
             "total_loss": float(total_loss_value.float().item()),
+            "base_valid_targets": base_valid_targets,
+            "base_logits_finite": base_logits_finite,
+            "c_thought_num": c_thought_num_debug,
+            "explain_valid_targets": int(explain_valid_targets),
+            "explain_logits_finite": explain_logits_finite,
+            "explain_effective_count_min": explain_effective_count_min,
+            "explain_effective_count_max": explain_effective_count_max,
         }
 
         return Outputs(loss=loss, inputs_embeds=inputs_embeds, logits=logits)
