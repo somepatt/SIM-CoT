@@ -294,6 +294,7 @@ def main():
     # -------------------------
     skip_generation_eval = bool(raw_cfg.get("skip_generation_eval", True))
     max_new_tokens = int(raw_cfg.get("max_new_tokens", 256))
+    loss_log_interval = int(raw_cfg.get("loss_log_interval", 10))
 
     base_dataset_valid = traj_data.get_dataset(
         dataset_name=configs.val_path,
@@ -475,6 +476,7 @@ def main():
                 outputs = parallel_model(
                     **{k: v for k, v in batch.items() if k != "idx"}
                 )
+                loss_breakdown = getattr(parallel_model.module, "last_loss_breakdown", None)
                 loss = outputs.loss / configs.gradient_accumulation_steps
                 loss.backward()
 
@@ -492,12 +494,40 @@ def main():
                         "train/step": epoch * len(train_dataloader) + step,
                         "train/loss": loss_scalar * configs.gradient_accumulation_steps,
                     }
+                    base_loss_scalar = None
+                    explain_loss_scalar = None
+                    total_loss_scalar = None
+                    if isinstance(loss_breakdown, dict):
+                        base_loss_scalar = loss_breakdown.get("base_loss")
+                        explain_loss_scalar = loss_breakdown.get("explain_loss")
+                        total_loss_scalar = loss_breakdown.get("total_loss")
+                        if base_loss_scalar is not None:
+                            log_dict["train/base_loss"] = base_loss_scalar
+                        if explain_loss_scalar is not None:
+                            log_dict["train/explain_loss"] = explain_loss_scalar
+                        if total_loss_scalar is not None:
+                            log_dict["train/total_loss"] = total_loss_scalar
+
                     if wandb_run:
                         wandb_run.log(log_dict)
+
+                    if step % loss_log_interval == 0:
+                        print(
+                            f"[loss_breakdown] epoch={epoch+1} step={step} "
+                            f"total={total_loss_scalar if total_loss_scalar is not None else 'NA'} "
+                            f"base={base_loss_scalar if base_loss_scalar is not None else 'NA'} "
+                            f"explain={explain_loss_scalar if explain_loss_scalar is not None else 'NA'}"
+                        )
+
+                    extra_loss_info = ""
+                    if base_loss_scalar is not None:
+                        extra_loss_info += f", base: {round(float(base_loss_scalar), 4)}"
+                    if explain_loss_scalar is not None:
+                        extra_loss_info += f", explain: {round(float(explain_loss_scalar), 4)}"
                     pbar.set_description(
                         f"Training Epoch: {epoch+1}/{configs.num_epochs}, "
                         f"batch {step}/{len(train_dataloader)} completed "
-                        f"(loss: {round(float(loss.detach().float() * configs.gradient_accumulation_steps), 4)})"
+                        f"(loss: {round(float(loss.detach().float() * configs.gradient_accumulation_steps), 4)}{extra_loss_info})"
                     )
 
             pbar.close()

@@ -190,6 +190,12 @@ class Coconut(nn.Module):
             shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
         )
 
+        self.last_loss_breakdown = {
+            "base_loss": float(loss.detach().float().item()),
+            "explain_loss": None,
+            "total_loss": float(loss.detach().float().item()),
+        }
+
         return Outputs(loss=loss, inputs_embeds=inputs_embeds, logits=logits)
 
     def train(self):
@@ -343,6 +349,8 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
     def forward(self, input_ids, attention_mask, labels, position_ids, **kwargs):
         logits = []
         loss = 0.0
+        base_loss_value = None
+        explain_loss_value = None
         latent_indices = (
             input_ids == self.latent_token_id
         ).nonzero()  # (num_latent_tokens_in_the_batch, 2)
@@ -513,6 +521,7 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
             loss = loss_fct(
                 shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
             )
+            base_loss_value = loss.detach()
         
         if hasattr(self.config, 'visualize') and self.config.visualize:
             debug_predictions = []
@@ -846,7 +855,16 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
         if 'explainable_ids_list' in kwargs:
             if loss is None:
                 loss = 0.0
-            loss += 1.0 * loss_explain_all / c_thought_num
+            explain_term = 1.0 * loss_explain_all / c_thought_num
+            explain_loss_value = explain_term.detach() if torch.is_tensor(explain_term) else torch.tensor(explain_term)
+            loss += explain_term
+
+        total_loss_value = loss.detach() if torch.is_tensor(loss) else torch.tensor(loss, device=input_ids.device)
+        self.last_loss_breakdown = {
+            "base_loss": float(base_loss_value.float().item()) if base_loss_value is not None else None,
+            "explain_loss": float(explain_loss_value.float().item()) if explain_loss_value is not None else None,
+            "total_loss": float(total_loss_value.float().item()),
+        }
 
         return Outputs(loss=loss, inputs_embeds=inputs_embeds, logits=logits)
 
