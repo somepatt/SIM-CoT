@@ -59,6 +59,26 @@ def _move_batch_to_device(batch, device):
     return moved
 
 
+def _report_nonfinite_params(module, module_name, max_items=8):
+    total_bad = 0
+    bad_items = []
+    with torch.no_grad():
+        for name, param in module.named_parameters():
+            if param is None:
+                continue
+            bad_mask = ~torch.isfinite(param.data)
+            bad_count = int(bad_mask.sum().item())
+            if bad_count > 0:
+                total_bad += bad_count
+                if len(bad_items) < max_items:
+                    bad_items.append((name, bad_count))
+    if total_bad > 0:
+        print(f"[nonfinite_params] {module_name}: total_bad={total_bad}, samples={bad_items}")
+    else:
+        print(f"[nonfinite_params] {module_name}: OK")
+    return total_bad
+
+
 def _build_explainable_ids_list(raw_steps, input_ids, latent_id, c_thought, l_id, r_id):
     """
     Build explainable supervision from the most recent thought steps only.
@@ -259,6 +279,12 @@ def main():
 
     if configs.load_model_path != "None" and not loaded:
         print(model.load_state_dict(saved_weights, strict=False))
+
+    if configs.mode == "coconutgpt_same_word_embedding":
+        _report_nonfinite_params(model.base_causallm, "base_causallm_after_load")
+        _report_nonfinite_params(model.expainable_llm, "expainable_llm_after_load")
+    else:
+        _report_nonfinite_params(model, "model_after_load")
 
     if rank == 0:
         print(f"Running FSDP on rank = {rank}, world size = {world_size}")
@@ -505,6 +531,8 @@ def main():
                     explain_logits_finite = None
                     explain_eff_min = None
                     explain_eff_max = None
+                    base_input_embeds_finite = None
+                    base_hidden_finite = None
                     if isinstance(loss_breakdown, dict):
                         base_loss_scalar = loss_breakdown.get("base_loss")
                         explain_loss_scalar = loss_breakdown.get("explain_loss")
@@ -516,6 +544,8 @@ def main():
                         explain_logits_finite = loss_breakdown.get("explain_logits_finite")
                         explain_eff_min = loss_breakdown.get("explain_effective_count_min")
                         explain_eff_max = loss_breakdown.get("explain_effective_count_max")
+                        base_input_embeds_finite = loss_breakdown.get("base_input_embeds_finite")
+                        base_hidden_finite = loss_breakdown.get("base_hidden_finite")
                         if base_loss_scalar is not None:
                             log_dict["train/base_loss"] = base_loss_scalar
                         if explain_loss_scalar is not None:
@@ -540,6 +570,8 @@ def main():
                             f"base_logits_finite={base_logits_finite if base_logits_finite is not None else 'NA'} "
                             f"explain_targets={explain_valid_targets if explain_valid_targets is not None else 'NA'} "
                             f"explain_logits_finite={explain_logits_finite if explain_logits_finite is not None else 'NA'} "
+                            f"base_input_embeds_finite={base_input_embeds_finite if base_input_embeds_finite is not None else 'NA'} "
+                            f"base_hidden_finite={base_hidden_finite if base_hidden_finite is not None else 'NA'} "
                             f"c_thought_num={c_thought_num_dbg if c_thought_num_dbg is not None else 'NA'} "
                             f"explain_eff_min={explain_eff_min if explain_eff_min is not None else 'NA'} "
                             f"explain_eff_max={explain_eff_max if explain_eff_max is not None else 'NA'}"
@@ -554,6 +586,8 @@ def main():
                             f"total={total_loss_scalar} base={base_loss_scalar} explain={explain_loss_scalar} "
                             f"base_targets={base_valid_targets} base_logits_finite={base_logits_finite} "
                             f"explain_targets={explain_valid_targets} explain_logits_finite={explain_logits_finite} "
+                            f"base_input_embeds_finite={base_input_embeds_finite} "
+                            f"base_hidden_finite={base_hidden_finite} "
                             f"c_thought_num={c_thought_num_dbg} "
                             f"explain_eff_min={explain_eff_min} explain_eff_max={explain_eff_max}"
                         )

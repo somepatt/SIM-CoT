@@ -358,6 +358,8 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
         explain_effective_count_min = None
         explain_effective_count_max = None
         c_thought_num_debug = None
+        base_input_embeds_finite = None
+        base_hidden_finite = True
         latent_indices = (
             input_ids == self.latent_token_id
         ).nonzero()  # (num_latent_tokens_in_the_batch, 2)
@@ -407,6 +409,7 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
 
         next_compute_range = (0, input_ids.shape[1])
         inputs_embeds = self.embedding(input_ids)
+        base_input_embeds_finite = bool(torch.isfinite(inputs_embeds).all().item())
 
         if max_n_latents > 0:
             next_compute_range = (0, latent_indices[:, 1].min().item())
@@ -467,6 +470,7 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
             hidden_states = outputs.hidden_states[
                 -1
             ]  # Get the last layer hidden states
+            base_hidden_finite = base_hidden_finite and bool(torch.isfinite(hidden_states).all().item())
             kv_cache = outputs.past_key_values
 
             # feedback the continuous thoughts to the input_embeds
@@ -895,6 +899,8 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
             "explain_logits_finite": explain_logits_finite,
             "explain_effective_count_min": explain_effective_count_min,
             "explain_effective_count_max": explain_effective_count_max,
+            "base_input_embeds_finite": base_input_embeds_finite,
+            "base_hidden_finite": base_hidden_finite,
         }
 
         return Outputs(loss=loss, inputs_embeds=inputs_embeds, logits=logits)
