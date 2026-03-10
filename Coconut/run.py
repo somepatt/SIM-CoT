@@ -79,6 +79,48 @@ def _report_nonfinite_params(module, module_name, max_items=8):
     return total_bad
 
 
+def _sanitize_token_rows(base_lm, token_ids, fallback_id):
+    emb = base_lm.get_input_embeddings().weight.data
+    lm_head = base_lm.lm_head.weight.data if hasattr(base_lm, "lm_head") else None
+
+    def safe_row(table, idx):
+        if idx is None or idx < 0 or idx >= table.size(0):
+            return torch.zeros_like(table[0])
+        row = table[idx]
+        if torch.isfinite(row).all():
+            return row.clone()
+        return torch.zeros_like(row)
+
+    fallback_emb = safe_row(emb, fallback_id)
+    fallback_lm = safe_row(lm_head, fallback_id) if lm_head is not None else None
+
+    repaired = 0
+    for tid in token_ids:
+        if tid is None or tid < 0 or tid >= emb.size(0):
+            continue
+        if not torch.isfinite(emb[tid]).all():
+            emb[tid].copy_(fallback_emb)
+            repaired += 1
+        if lm_head is not None and not torch.isfinite(lm_head[tid]).all():
+            lm_head[tid].copy_(fallback_lm)
+            repaired += 1
+    return repaired
+
+
+def _sanitize_special_embeddings(model, token_ids, fallback_id):
+    repaired_total = 0
+    with torch.no_grad():
+        if hasattr(model, "base_causallm"):
+            repaired_total += _sanitize_token_rows(model.base_causallm, token_ids, fallback_id)
+        elif hasattr(model, "get_input_embeddings"):
+            repaired_total += _sanitize_token_rows(model, token_ids, fallback_id)
+
+        if hasattr(model, "expainable_llm"):
+            repaired_total += _sanitize_token_rows(model.expainable_llm, token_ids, fallback_id)
+    print(f"[sanitize_special_embeddings] repaired_rows={repaired_total}")
+    return repaired_total
+
+
 def _build_explainable_ids_list(raw_steps, input_ids, latent_id, c_thought, l_id, r_id):
     """
     Build explainable supervision from the most recent thought steps only.
@@ -279,6 +321,13 @@ def main():
 
     if configs.load_model_path != "None" and not loaded:
         print(model.load_state_dict(saved_weights, strict=False))
+
+    # Repair possible NaN/Inf rows for special tokens after checkpoint loading.
+    _sanitize_special_embeddings(
+        model=model,
+        token_ids=[latent_id, start_id, end_id, l_id, r_id],
+        fallback_id=tokenizer.eos_token_id,
+    )
 
     if configs.mode == "coconutgpt_same_word_embedding":
         _report_nonfinite_params(model.base_causallm, "base_causallm_after_load")
