@@ -30,6 +30,7 @@ bf16: True
 
 train_path: resolved_trajectories_openai__Qwen__Qwen3-Coder-30B-A3B-Instruct.eval_default
 val_path: resolved_trajectories_openai__Qwen__Qwen3-Coder-30B-A3B-Instruct.eval_default
+steps_field: steps
 
 reset_optimizer: True
 batch_size_training: 2

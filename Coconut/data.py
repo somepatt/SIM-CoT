@@ -87,8 +87,15 @@ def _extract_steps(
     steps_pattern: Optional[str],
     steps_delimiter: Optional[str],
 ) -> List[str]:
+    selected_steps_field: Optional[str] = None
     if steps_field and steps_field in sample:
-        raw_steps = sample[steps_field]
+        selected_steps_field = steps_field
+    elif "steps" in sample:
+        # Local trajectory loader stores thoughts in `steps`.
+        selected_steps_field = "steps"
+
+    if selected_steps_field is not None:
+        raw_steps = sample[selected_steps_field]
         if isinstance(raw_steps, list):
             steps = raw_steps
         elif isinstance(raw_steps, str):
