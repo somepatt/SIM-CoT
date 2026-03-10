@@ -788,6 +788,16 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
                             start_idx = thought_idx * self.c_thought
                             end_idx = min(start_idx + self.c_thought, latent_len)
                             continuous_embeds = inputs_embeds[bz_idx, latent_lists[bz_idx][start_idx:end_idx], :]
+                            if continuous_embeds.size(0) < self.c_thought:
+                                # Some samples can have fewer latent slots than c_thought_num.
+                                # Pad missing latent embeddings so per-batch tensors align.
+                                pad_rows = self.c_thought - continuous_embeds.size(0)
+                                pad_embeds = torch.zeros(
+                                    (pad_rows, continuous_embeds.size(-1)),
+                                    dtype=continuous_embeds.dtype,
+                                    device=continuous_embeds.device,
+                                )
+                                continuous_embeds = torch.cat([continuous_embeds, pad_embeds], dim=0)
                             
                             other_embeds = self.embedding(torch.tensor(input_united_tokens[bz_idx][thought_idx][self.c_thought:]).to(self.expainable_llm.device))
                             input_explain_input_embeds.append(torch.cat([continuous_embeds, other_embeds], dim=0))

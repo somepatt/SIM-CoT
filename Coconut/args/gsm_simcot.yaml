@@ -1,6 +1,6 @@
 project: coconut
 save_path: ./ckpts
-name: traj_qwen3_0p6b_stage2_simcot
+name: traj_qwen3_0p6b_stage2_simcot_new
 
 only_eval: False
 
@@ -19,7 +19,7 @@ uniform_prob: 0.0
 
 # Model: стартуем со Stage-1 чекпоинта
 model_id: Qwen/Qwen3-0.6B
-load_model_path: ./ckpts/traj_qwen3_0p6b_stage1_coconut/checkpoint_25
+load_model_path: ./ckpts_new/traj_qwen3_0p6b_stage1_coconut/checkpoint_25
 save_only_improve: False
 
 # Train
