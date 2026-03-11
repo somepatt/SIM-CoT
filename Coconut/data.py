@@ -59,10 +59,10 @@ def _split_assistant_turn(content: str) -> Optional[Dict[str, str]]:
     thought_text = content[:match.start()].strip()
     if thought_text.startswith("THOUGHT:"):
         thought_text = thought_text[len("THOUGHT:"):].strip()
-    code_text = match.group(1).strip()
-    if not code_text:
+    target_text = content[match.start():].strip()
+    if not target_text:
         return None
-    return {"thought": thought_text, "code": code_text}
+    return {"thought": thought_text, "target": target_text}
 
 
 def _extract_steps_from_messages(messages: List[Dict]) -> List[str]:
@@ -151,19 +151,19 @@ def _load_trajectory_dataset(dataset_path: str) -> Dataset:
                 content = message.get("content") or ""
                 split = _split_assistant_turn(content)
 
-                if split and split["code"]:
+                if split and split["target"]:
                     # Создаем prompt из всего накопленного контекста
                     prompt = _format_chat_messages(accumulated_context)
                     thought = split["thought"]
-                    code = split["code"]
+                    target = split["target"]
 
-                    if prompt and code:
+                    if prompt and target:
                         sample_id = f"{instance_id}-step{step_counter}" if instance_id else None
                         samples.append(
                             {
                                 "instance_id": sample_id,
                                 "prompt": prompt,
-                                "patch": code,
+                                "patch": target,
                                 "steps": [thought] if thought else [],
                             }
                         )
@@ -416,7 +416,23 @@ class MyCollator:
             )
 
         if steps_key in features[0]:
-            batch[steps_key] = [feature.get(steps_key, []) for feature in features]
+            flattened_steps = []
+            for feature in features:
+                raw_steps = feature.get(steps_key, [])
+                if not raw_steps:
+                    flattened_steps.append([])
+                    continue
+                if isinstance(raw_steps[0], int):
+                    flattened_steps.append([int(t) for t in raw_steps])
+                    continue
+                merged = []
+                for group in raw_steps:
+                    if isinstance(group, list):
+                        merged.extend(int(t) for t in group)
+                    elif isinstance(group, int):
+                        merged.append(int(group))
+                flattened_steps.append(merged)
+            batch[steps_key] = flattened_steps
 
         return batch
 

@@ -13,7 +13,8 @@ no_cot: False
 # Latent schedule (обычно оставляют тем же)
 c_thought: 2
 epochs_per_stage: 3
-max_latent_stage: 5
+# One trajectory sample contains only the current thought.
+max_latent_stage: 1
 pad_latent_to_max: True
 uniform_prob: 0.0
 
@@ -30,6 +31,9 @@ bf16: True
 
 train_path: resolved_trajectories_openai__Qwen__Qwen3-Coder-30B-A3B-Instruct.eval_default
 val_path: resolved_trajectories_openai__Qwen__Qwen3-Coder-30B-A3B-Instruct.eval_default
+
+# Drop samples where thought text is empty.
+require_steps: True
 
 
 max_seq_length: 4096

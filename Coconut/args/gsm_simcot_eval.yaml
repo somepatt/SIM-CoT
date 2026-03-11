@@ -12,7 +12,7 @@ coconutgpt: True
 
 c_thought: 2
 epochs_per_stage: 3
-max_latent_stage: 5
+max_latent_stage: 1
 pad_latent_to_max: True
 
 save_only_improve: False
@@ -30,6 +30,7 @@ bf16: False
 # data
 train_path: ./data/gsm_train.json
 val_path: ./data/gsm_test.json
+require_steps: True
 
 reset_optimizer: True
 batch_size_training: 8

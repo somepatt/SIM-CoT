@@ -614,30 +614,34 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
                     if len(groups) == 0:
                         groups = [trim_trailing_zeros(seq)]
 
-                    if len(groups) < self.config.max_latent_stage:
-                        input_ids_j = input_ids[j].tolist()
+                    if len(groups) < c_thought_num:
+                        if groups and groups[0]:
+                            while len(groups) < c_thought_num:
+                                groups.append(copy.deepcopy(groups[-1]))
+                        else:
+                            input_ids_j = input_ids[j].tolist()
 
-                        try:
-                            start_idx = len(input_ids_j) - 1 - input_ids_j[::-1].index(self.end_latent_id)
-                        except ValueError:
-                            continue
+                            try:
+                                start_idx = len(input_ids_j) - 1 - input_ids_j[::-1].index(self.end_latent_id)
+                            except ValueError:
+                                continue
 
-                        try:
-                            end_idx = input_ids_j.index(self.eos_token_id, start_idx + 1)
-                        except ValueError:
-                            end_idx = len(input_ids_j)
+                            try:
+                                end_idx = input_ids_j.index(self.eos_token_id, start_idx + 1)
+                            except ValueError:
+                                end_idx = len(input_ids_j)
 
-                        pseudo_thought = input_ids_j[start_idx + 1:end_idx]
+                            pseudo_thought = input_ids_j[start_idx + 1:end_idx]
+                            if not pseudo_thought:
+                                continue
 
-                        if not pseudo_thought:
-                            continue
+                            if hasattr(self.config, 'format_pseudo_thought') and self.config.format_pseudo_thought:
+                                tmp_num = self.tokenizer.decode(pseudo_thought).replace('### ', '')
+                                pseudo_thought = self.tokenizer.encode(f'<<{tmp_num}={tmp_num}>>', add_special_tokens=False)
 
-                        if hasattr(self.config, 'format_pseudo_thought') and self.config.format_pseudo_thought:
-                            tmp_num = self.tokenizer.decode(pseudo_thought).replace('### ', '')
-                            pseudo_thought = self.tokenizer.encode(f'<<{tmp_num}={tmp_num}>>', add_special_tokens=False)
-
-                        while len(groups) < c_thought_num:
-                            groups.append(pseudo_thought)
+                            groups = [pseudo_thought]
+                            while len(groups) < c_thought_num:
+                                groups.append(copy.deepcopy(groups[-1]))
 
                     input_united_groups = []
                     combined_group = []
