@@ -26,6 +26,7 @@ save_only_improve: False
 wandb: False
 seed: 0
 resume: 25
+auto_resume: false
 bf16: True
 
 train_path: resolved_trajectories_openai__Qwen__Qwen3-Coder-30B-A3B-Instruct.eval_default

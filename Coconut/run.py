@@ -167,6 +167,7 @@ def main():
 
     configs = Config(config_dict)
     raw_cfg = config_dict  # pass dict into data.py helpers (expects .get())
+    auto_resume = bool(raw_cfg.get("auto_resume", True))
 
     set_seed(configs.seed)
 
@@ -178,7 +179,7 @@ def main():
     cur_ckpts = os.listdir(save_dir)
 
     # check if the job is preempted and resumed.
-    if len(cur_ckpts) > 0 and not configs.only_eval:
+    if auto_resume and len(cur_ckpts) > 0 and not configs.only_eval:
         if rank == 0:
             print(
                 "Warning: found previous run and gonna resume from that. "
@@ -204,6 +205,8 @@ def main():
                 f"Loading from {configs.load_model_path} and skip the first "
                 f"{configs.resume} epochs"
             )
+    elif (not auto_resume) and (len(cur_ckpts) > 0) and rank == 0:
+        print("Auto-resume is disabled (auto_resume=false), ignoring existing checkpoints in save_dir.")
 
     trust_remote = bool(raw_cfg.get("trust_remote_code", False))
 
@@ -329,11 +332,21 @@ def main():
         fallback_id=tokenizer.eos_token_id,
     )
 
+    nonfinite_bad_total = 0
     if configs.mode == "coconutgpt_same_word_embedding":
-        _report_nonfinite_params(model.base_causallm, "base_causallm_after_load")
-        _report_nonfinite_params(model.expainable_llm, "expainable_llm_after_load")
+        bad_base = _report_nonfinite_params(model.base_causallm, "base_causallm_after_load")
+        bad_explain = _report_nonfinite_params(model.expainable_llm, "expainable_llm_after_load")
+        nonfinite_bad_total = bad_base + bad_explain
     else:
-        _report_nonfinite_params(model, "model_after_load")
+        nonfinite_bad_total = _report_nonfinite_params(model, "model_after_load")
+
+    allow_nonfinite_checkpoint = bool(raw_cfg.get("allow_nonfinite_checkpoint", False))
+    if (configs.load_model_path != "None") and (nonfinite_bad_total > 0) and (not allow_nonfinite_checkpoint):
+        raise RuntimeError(
+            f"Loaded checkpoint contains non-finite weights (count={nonfinite_bad_total}). "
+            f"Checkpoint path: {configs.load_model_path}. "
+            "Use a different checkpoint or set allow_nonfinite_checkpoint: true to bypass (not recommended)."
+        )
 
     if rank == 0:
         print(f"Running FSDP on rank = {rank}, world size = {world_size}")
