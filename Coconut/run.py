@@ -79,6 +79,50 @@ def _report_nonfinite_params(module, module_name, max_items=8):
     return total_bad
 
 
+def _module_grad_norm(module):
+    total = 0.0
+    for param in module.parameters():
+        if param.grad is None:
+            continue
+        grad = param.grad.detach()
+        if grad.numel() == 0:
+            continue
+        norm = grad.norm(2)
+        if not torch.isfinite(norm):
+            return float("nan")
+        total += float(norm.item()) ** 2
+    return total ** 0.5
+
+
+def _grad_health_report(module, max_items=8):
+    total_bad = 0
+    bad_items = []
+    max_abs_grad = 0.0
+
+    for name, param in module.named_parameters():
+        if param.grad is None:
+            continue
+        grad = param.grad.detach()
+        finite = torch.isfinite(grad)
+        bad = int((~finite).sum().item())
+        if bad > 0:
+            total_bad += bad
+            if len(bad_items) < max_items:
+                bad_items.append((name, bad))
+            continue
+
+        if grad.numel() > 0:
+            cur_max = float(grad.abs().max().item())
+            if cur_max > max_abs_grad:
+                max_abs_grad = cur_max
+
+    return {
+        "total_bad": total_bad,
+        "bad_items": bad_items,
+        "max_abs_grad": max_abs_grad,
+    }
+
+
 def _sanitize_token_rows(base_lm, token_ids, fallback_id):
     emb = base_lm.get_input_embeddings().weight.data
     lm_head = base_lm.lm_head.weight.data if hasattr(base_lm, "lm_head") else None
@@ -385,6 +429,12 @@ def main():
     max_new_tokens = int(raw_cfg.get("max_new_tokens", 256))
     loss_log_interval = int(raw_cfg.get("loss_log_interval", 10))
     max_grad_norm = float(raw_cfg.get("max_grad_norm", 1.0))
+    grad_health_interval = int(raw_cfg.get("grad_health_interval", 1))
+    detect_anomaly = bool(raw_cfg.get("detect_anomaly", False))
+    if detect_anomaly:
+        torch.autograd.set_detect_anomaly(True)
+        if rank == 0:
+            print("Autograd anomaly detection is enabled.")
 
     base_dataset_valid = traj_data.get_dataset(
         dataset_name=configs.val_path,
@@ -573,6 +623,14 @@ def main():
                 if (step + 1) % configs.gradient_accumulation_steps == 0 or step == (
                     len(train_dataloader) - 1
                 ):
+                    grad_health = _grad_health_report(parallel_model.module)
+                    step_base_grad_norm = None
+                    step_explain_grad_norm = None
+                    if hasattr(parallel_model.module, "base_causallm"):
+                        step_base_grad_norm = _module_grad_norm(parallel_model.module.base_causallm)
+                    if hasattr(parallel_model.module, "expainable_llm"):
+                        step_explain_grad_norm = _module_grad_norm(parallel_model.module.expainable_llm)
+
                     grad_norm_value = None
                     if max_grad_norm > 0:
                         if hasattr(parallel_model, "clip_grad_norm_"):
@@ -588,6 +646,9 @@ def main():
                     pbar.update(1)
                 else:
                     grad_norm_value = None
+                    grad_health = None
+                    step_base_grad_norm = None
+                    step_explain_grad_norm = None
 
                 if rank == 0:
                     loss_scalar = loss.detach().item()
@@ -608,6 +669,11 @@ def main():
                     explain_eff_max = None
                     base_input_embeds_finite = None
                     base_hidden_finite = None
+                    grad_total_bad = None
+                    grad_bad_items = None
+                    grad_max_abs = None
+                    base_grad_norm = step_base_grad_norm
+                    explain_grad_norm = step_explain_grad_norm
                     if isinstance(loss_breakdown, dict):
                         base_loss_scalar = loss_breakdown.get("base_loss")
                         explain_loss_scalar = loss_breakdown.get("explain_loss")
@@ -633,6 +699,20 @@ def main():
                             log_dict["train/explain_valid_targets"] = explain_valid_targets
                     if grad_norm_value is not None:
                         log_dict["train/grad_norm"] = grad_norm_value
+                    if (step + 1) % configs.gradient_accumulation_steps == 0 or step == (
+                        len(train_dataloader) - 1
+                    ):
+                        grad_total_bad = grad_health["total_bad"]
+                        grad_bad_items = grad_health["bad_items"]
+                        grad_max_abs = grad_health["max_abs_grad"]
+                        if grad_total_bad is not None:
+                            log_dict["train/grad_nonfinite_count"] = grad_total_bad
+                        if grad_max_abs is not None:
+                            log_dict["train/grad_max_abs"] = grad_max_abs
+                        if base_grad_norm is not None and math.isfinite(base_grad_norm):
+                            log_dict["train/base_grad_norm"] = base_grad_norm
+                        if explain_grad_norm is not None and math.isfinite(explain_grad_norm):
+                            log_dict["train/explain_grad_norm"] = explain_grad_norm
 
                     if wandb_run:
                         wandb_run.log(log_dict)
@@ -653,6 +733,19 @@ def main():
                             f"explain_eff_min={explain_eff_min if explain_eff_min is not None else 'NA'} "
                             f"explain_eff_max={explain_eff_max if explain_eff_max is not None else 'NA'} "
                             f"grad_norm={grad_norm_value if grad_norm_value is not None else 'NA'}"
+                        )
+                    if (
+                        ((step + 1) % configs.gradient_accumulation_steps == 0 or step == (len(train_dataloader) - 1))
+                        and (
+                            grad_total_bad is not None
+                            and (grad_total_bad > 0 or step % grad_health_interval == 0)
+                        )
+                    ):
+                        print(
+                            f"[grad_health] epoch={epoch+1} step={step} "
+                            f"nonfinite_grad={grad_total_bad} max_abs_grad={grad_max_abs} "
+                            f"base_grad_norm={base_grad_norm} explain_grad_norm={explain_grad_norm} "
+                            f"samples={grad_bad_items}"
                         )
 
                     nan_in_total = (total_loss_scalar is not None) and (not math.isfinite(float(total_loss_scalar)))

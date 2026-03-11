@@ -1,5 +1,5 @@
 project: coconut
-save_path: ./ckpts
+save_path: ./ckpts_100326
 name: traj_qwen3_0p6b_stage2_simcot_new
 
 only_eval: False
@@ -19,7 +19,7 @@ uniform_prob: 0.0
 
 # Model: стартуем со Stage-1 чекпоинта
 model_id: Qwen/Qwen3-0.6B
-load_model_path: ./ckpts_new/traj_qwen3_0p6b_stage1_coconut/checkpoint_25
+load_model_path: ./ckpts_100326/traj_qwen3_0p6b_stage1_coconut/checkpoint_25
 save_only_improve: False
 
 # Train
@@ -27,7 +27,7 @@ wandb: False
 seed: 0
 resume: 25
 auto_resume: false
-bf16: False
+bf16: True
 
 train_path: resolved_trajectories_openai__Qwen__Qwen3-Coder-30B-A3B-Instruct.eval_default
 val_path: resolved_trajectories_openai__Qwen__Qwen3-Coder-30B-A3B-Instruct.eval_default
@@ -43,8 +43,10 @@ num_epochs: 10
 lr: !!float "1e-5"
 weight_decay: 0.01
 loss_level: token_level
-max_grad_norm: 1.0
+max_grad_norm: 10.0
 loss_log_interval: 1
+grad_health_interval: 1
+detect_anomaly: true
 
 # IMPORTANT: SIM-CoT mode (как в gsm_simcot.yaml)
 mode: coconutgpt_same_word_embedding
