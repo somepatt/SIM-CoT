@@ -511,7 +511,10 @@ def main():
     best_acc = 0
 
     collator = traj_data.MyCollator(
-        tokenizer, latent_id=latent_id, label_pad_token_id=-100
+        tokenizer,
+        latent_id=latent_id,
+        label_pad_token_id=-100,
+        left_pad_attention_mask_value=int(raw_cfg.get("left_pad_attention_mask_value", 1)),
     )
 
     for epoch in range(configs.resume, configs.num_epochs + configs.resume):

@@ -28,8 +28,9 @@ seed: 0
 resume: 25
 auto_resume: false
 bf16: True
-attn_implementation: eager
-force_math_sdp: true
+attn_implementation: sdpa
+force_math_sdp: false
+left_pad_attention_mask_value: 1
 
 train_path: resolved_trajectories_openai__Qwen__Qwen3-Coder-30B-A3B-Instruct.eval_default
 val_path: resolved_trajectories_openai__Qwen__Qwen3-Coder-30B-A3B-Instruct.eval_default

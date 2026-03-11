@@ -333,6 +333,7 @@ class MyCollator:
     tokenizer: PreTrainedTokenizerBase
     latent_id: Optional[int] = None
     label_pad_token_id: Optional[int] = -100
+    left_pad_attention_mask_value: int = 1
 
     def __call__(self, features, return_tensors=None):
         if not features:
@@ -370,7 +371,8 @@ class MyCollator:
                         self.label_pad_token_id
                     ] * n_tok_pad + feature["labels"]
 
-                feature["attention_mask"] = [0] * n_tok_pad + feature["attention_mask"]
+                # For SDPA stability, avoid fully-masked left-padded query rows.
+                feature["attention_mask"] = [self.left_pad_attention_mask_value] * n_tok_pad + feature["attention_mask"]
 
         return_tensors = "pt"
 
