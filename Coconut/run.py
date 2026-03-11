@@ -384,6 +384,7 @@ def main():
     skip_generation_eval = bool(raw_cfg.get("skip_generation_eval", True))
     max_new_tokens = int(raw_cfg.get("max_new_tokens", 256))
     loss_log_interval = int(raw_cfg.get("loss_log_interval", 10))
+    max_grad_norm = float(raw_cfg.get("max_grad_norm", 1.0))
 
     base_dataset_valid = traj_data.get_dataset(
         dataset_name=configs.val_path,
@@ -572,9 +573,21 @@ def main():
                 if (step + 1) % configs.gradient_accumulation_steps == 0 or step == (
                     len(train_dataloader) - 1
                 ):
+                    grad_norm_value = None
+                    if max_grad_norm > 0:
+                        if hasattr(parallel_model, "clip_grad_norm_"):
+                            grad_norm = parallel_model.clip_grad_norm_(max_grad_norm)
+                        else:
+                            grad_norm = torch.nn.utils.clip_grad_norm_(
+                                parallel_model.parameters(),
+                                max_grad_norm,
+                            )
+                        grad_norm_value = float(grad_norm.item()) if torch.is_tensor(grad_norm) else float(grad_norm)
                     optimizer.step()
                     optimizer.zero_grad()
                     pbar.update(1)
+                else:
+                    grad_norm_value = None
 
                 if rank == 0:
                     loss_scalar = loss.detach().item()
@@ -618,6 +631,8 @@ def main():
                             log_dict["train/base_valid_targets"] = base_valid_targets
                         if explain_valid_targets is not None:
                             log_dict["train/explain_valid_targets"] = explain_valid_targets
+                    if grad_norm_value is not None:
+                        log_dict["train/grad_norm"] = grad_norm_value
 
                     if wandb_run:
                         wandb_run.log(log_dict)
@@ -636,7 +651,8 @@ def main():
                             f"base_hidden_finite={base_hidden_finite if base_hidden_finite is not None else 'NA'} "
                             f"c_thought_num={c_thought_num_dbg if c_thought_num_dbg is not None else 'NA'} "
                             f"explain_eff_min={explain_eff_min if explain_eff_min is not None else 'NA'} "
-                            f"explain_eff_max={explain_eff_max if explain_eff_max is not None else 'NA'}"
+                            f"explain_eff_max={explain_eff_max if explain_eff_max is not None else 'NA'} "
+                            f"grad_norm={grad_norm_value if grad_norm_value is not None else 'NA'}"
                         )
 
                     nan_in_total = (total_loss_scalar is not None) and (not math.isfinite(float(total_loss_scalar)))
@@ -659,6 +675,8 @@ def main():
                         extra_loss_info += f", base: {round(float(base_loss_scalar), 4)}"
                     if explain_loss_scalar is not None:
                         extra_loss_info += f", explain: {round(float(explain_loss_scalar), 4)}"
+                    if grad_norm_value is not None:
+                        extra_loss_info += f", gnorm: {round(float(grad_norm_value), 4)}"
                     pbar.set_description(
                         f"Training Epoch: {epoch+1}/{configs.num_epochs}, "
                         f"batch {step}/{len(train_dataloader)} completed "

@@ -27,7 +27,7 @@ wandb: False
 seed: 0
 resume: 25
 auto_resume: false
-bf16: True
+bf16: False
 
 train_path: resolved_trajectories_openai__Qwen__Qwen3-Coder-30B-A3B-Instruct.eval_default
 val_path: resolved_trajectories_openai__Qwen__Qwen3-Coder-30B-A3B-Instruct.eval_default
@@ -40,8 +40,11 @@ reset_optimizer: True
 batch_size_training: 2
 debug: False
 num_epochs: 10
-lr: !!float "5e-5"
+lr: !!float "1e-5"
 weight_decay: 0.01
+loss_level: token_level
+max_grad_norm: 1.0
+loss_log_interval: 1
 
 # IMPORTANT: SIM-CoT mode (как в gsm_simcot.yaml)
 mode: coconutgpt_same_word_embedding

@@ -351,6 +351,7 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
         loss = 0.0
         base_loss_value = None
         explain_loss_value = None
+        loss_level = getattr(self.config, "loss_level", "token_level")
         base_valid_targets = None
         base_logits_finite = None
         explain_valid_targets = 0
@@ -534,7 +535,7 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
             loss = loss_fct(
                 shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
             )
-            base_loss_value = loss.detach()
+            base_loss_value = float(loss.detach().float().item())
         
         if hasattr(self.config, 'visualize') and self.config.visualize:
             debug_predictions = []
@@ -777,10 +778,12 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
                     )
 
                     explainable_logits = explainable_outputs.logits
-                    effective_loss_num = float((input_explain_labels_batch_tensor != -100).sum(dim=1).bool().sum().item())
-
                     shift_explain_logits = explainable_logits[..., :-1, :].contiguous()
                     shift_explain_labels = input_explain_labels_batch_tensor[..., 1:].to(torch.long).contiguous()
+                    if loss_level == 'token_level':
+                        effective_loss_num = float((shift_explain_labels != -100).sum().item())
+                    else:
+                        effective_loss_num = float((input_explain_labels_batch_tensor != -100).sum(dim=1).bool().sum().item())
                     explain_valid_targets += int((shift_explain_labels != -100).sum().item())
                     explain_logits_finite = explain_logits_finite and bool(torch.isfinite(shift_explain_logits).all().item())
                     eff_cnt = float(effective_loss_num)
@@ -792,9 +795,9 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
                     loss_explain = loss_explain_fct(
                         shift_explain_logits.view(-1, shift_explain_logits.size(-1)), shift_explain_labels.view(-1)
                     )
-
-                    loss_explain /= effective_loss_num
-                    loss_explain_all += loss_explain
+                    if effective_loss_num > 0:
+                        loss_explain /= effective_loss_num
+                        loss_explain_all += loss_explain
 
                 else:
                     
@@ -859,13 +862,12 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
                         else:
                             explainable_logits = explainable_outputs.logits
                         
-                        if hasattr(self.config, "loss_level") and self.config.loss_level == 'token_level':
-                            effective_token_count = (input_explain_labels != -100).sum()
-                        else:
-                            effective_token_count = float((input_explain_labels != -100).sum(dim=1).bool().sum().item())
-
                         shift_explain_logits = explainable_logits[..., :-1, :].contiguous()
                         shift_explain_labels = input_explain_labels[..., 1:].contiguous()
+                        if loss_level == 'token_level':
+                            effective_token_count = (shift_explain_labels != -100).sum()
+                        else:
+                            effective_token_count = float((input_explain_labels != -100).sum(dim=1).bool().sum().item())
                         explain_valid_targets += int((shift_explain_labels != -100).sum().item())
                         explain_logits_finite = explain_logits_finite and bool(torch.isfinite(shift_explain_logits).all().item())
                         eff_cnt = float(effective_token_count.item()) if torch.is_tensor(effective_token_count) else float(effective_token_count)
@@ -877,21 +879,25 @@ class CoconutGPT_Same_Word_Embedding(nn.Module):
                         loss_explain = loss_explain_fct(
                             shift_explain_logits.view(-1, shift_explain_logits.size(-1)).to(self.expainable_llm.device), shift_explain_labels.view(-1).to(self.expainable_llm.device)
                         )
-                        loss_explain /= effective_token_count
-                        loss_explain_all += loss_explain
+                        if eff_cnt > 0:
+                            loss_explain /= effective_token_count
+                            loss_explain_all += loss_explain
                         
         if 'explainable_ids_list' in kwargs:
             if loss is None:
                 loss = 0.0
-            explain_term = 1.0 * loss_explain_all / c_thought_num
-            explain_loss_value = explain_term.detach() if torch.is_tensor(explain_term) else torch.tensor(explain_term)
+            if 'c_thought_num' in locals() and c_thought_num > 0:
+                explain_term = 1.0 * loss_explain_all / c_thought_num
+            else:
+                explain_term = torch.zeros((), device=input_ids.device, dtype=torch.float32)
+            explain_loss_value = float(explain_term.detach().float().item()) if torch.is_tensor(explain_term) else float(explain_term)
             loss += explain_term
 
-        total_loss_value = loss.detach() if torch.is_tensor(loss) else torch.tensor(loss, device=input_ids.device)
+        total_loss_value = float(loss.detach().float().item()) if torch.is_tensor(loss) else float(loss)
         self.last_loss_breakdown = {
-            "base_loss": float(base_loss_value.float().item()) if base_loss_value is not None else None,
-            "explain_loss": float(explain_loss_value.float().item()) if explain_loss_value is not None else None,
-            "total_loss": float(total_loss_value.float().item()),
+            "base_loss": base_loss_value,
+            "explain_loss": explain_loss_value,
+            "total_loss": total_loss_value,
             "base_valid_targets": base_valid_targets,
             "base_logits_finite": base_logits_finite,
             "c_thought_num": c_thought_num_debug,
