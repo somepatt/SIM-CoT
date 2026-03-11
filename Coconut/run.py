@@ -212,6 +212,18 @@ def main():
     configs = Config(config_dict)
     raw_cfg = config_dict  # pass dict into data.py helpers (expects .get())
     auto_resume = bool(raw_cfg.get("auto_resume", True))
+    attn_implementation = raw_cfg.get("attn_implementation", None)
+    force_math_sdp = bool(raw_cfg.get("force_math_sdp", False))
+
+    if force_math_sdp and torch.cuda.is_available():
+        if hasattr(torch.backends.cuda, "enable_flash_sdp"):
+            torch.backends.cuda.enable_flash_sdp(False)
+        if hasattr(torch.backends.cuda, "enable_mem_efficient_sdp"):
+            torch.backends.cuda.enable_mem_efficient_sdp(False)
+        if hasattr(torch.backends.cuda, "enable_math_sdp"):
+            torch.backends.cuda.enable_math_sdp(True)
+        if rank == 0:
+            print("Forced CUDA SDPA backend to math (flash/mem_efficient disabled).")
 
     set_seed(configs.seed)
 
@@ -254,16 +266,33 @@ def main():
 
     trust_remote = bool(raw_cfg.get("trust_remote_code", False))
 
-    model = AutoModelForCausalLM.from_pretrained(
-        configs.model_id,
-        trust_remote_code=trust_remote,
-    ).to(local_rank)
+    model_load_kwargs = {"trust_remote_code": trust_remote}
+    if attn_implementation:
+        model_load_kwargs["attn_implementation"] = attn_implementation
 
-    if configs.mode != "coconut_baseline":
-        explainable_model = AutoModelForCausalLM.from_pretrained(
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            configs.model_id,
+            **model_load_kwargs,
+        ).to(local_rank)
+    except TypeError:
+        # Some transformers/model versions may not support attn_implementation.
+        model = AutoModelForCausalLM.from_pretrained(
             configs.model_id,
             trust_remote_code=trust_remote,
         ).to(local_rank)
+
+    if configs.mode != "coconut_baseline":
+        try:
+            explainable_model = AutoModelForCausalLM.from_pretrained(
+                configs.model_id,
+                **model_load_kwargs,
+            ).to(local_rank)
+        except TypeError:
+            explainable_model = AutoModelForCausalLM.from_pretrained(
+                configs.model_id,
+                trust_remote_code=trust_remote,
+            ).to(local_rank)
     else:
         explainable_model = None
 
